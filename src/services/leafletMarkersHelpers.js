@@ -31,6 +31,11 @@ angular.module('ui-leaflet').service('leafletMarkersHelpers', function ($rootSco
         logger.debug(_string(marker));
     };
 
+
+    var existDomContainer = function (groupName) {
+        return angular.element(groups[groupName]._map._container).parent().length > 0;
+    };
+
     var createLeafletIcon = function (iconData) {
         if (isDefined(iconData) && isDefined(iconData.type) && iconData.type === 'awesomeMarker') {
             if (!AwesomeMarkersPlugin.isLoaded()) {
@@ -71,10 +76,13 @@ angular.module('ui-leaflet').service('leafletMarkersHelpers', function ($rootSco
             if (!DomMarkersPlugin.isLoaded()) {
                 $log.error(errorHeader + 'The DomMarkers Plugin is not loaded.');
             }
-            var markerScope = angular.isFunction(iconData.getMarkerScope) ? iconData.getMarkerScope() : $rootScope,
+            var markerScope = angular.isFunction(iconData.getMarkerScope) ? iconData.getMarkerScope().$new() : $rootScope,
                 template = $compile(iconData.template)(markerScope),
                 iconDataCopy = angular.copy(iconData);
+            iconDataCopy.ngElement = template;
             iconDataCopy.element = template[0];
+            if(angular.isFunction(iconData.getMarkerScope))
+                iconDataCopy.scope = markerScope;
             return new L.DomMarkers.icon(iconDataCopy);
         }
 
@@ -90,6 +98,7 @@ angular.module('ui-leaflet').service('leafletMarkersHelpers', function ($rootSco
             return new L.Icon.Default({
                 iconUrl: base64icon,
                 shadowUrl: base64shadow,
+                imagePath: ' ',
                 iconSize: [25, 41],
                 iconAnchor: [12, 41],
                 popupAnchor: [1, -34],
@@ -102,7 +111,7 @@ angular.module('ui-leaflet').service('leafletMarkersHelpers', function ($rootSco
 
     var _resetMarkerGroup = function (groupName) {
         if (isDefined(groups[groupName])) {
-            groups.splice(groupName, 1);
+            delete groups[groupName];
         }
     };
 
@@ -110,8 +119,31 @@ angular.module('ui-leaflet').service('leafletMarkersHelpers', function ($rootSco
         groups = {};
     };
 
+    var _resetUnusedMarkerGroups = function (){
+        for(var groupName in groups) {
+            if (!existDomContainer(groupName)) {
+                _resetMarkerGroup(groupName);
+            }
+        }
+    };
+
+    var _cleanDomIcon = function _cleanDomIcon(marker) {
+        if( marker.options.icon.options.ngElement) {
+            marker.options.icon.options.ngElement.remove();
+        }
+        if( marker.options.icon.options.scope) {
+            marker.options.icon.options.scope.$destroy();
+        }
+    };
+
     var _deleteMarker = function (marker, map, layers) {
         marker.closePopup();
+
+        // if it's a dom icon, clean it
+        if(marker.options.icon && marker.options.icon.options && marker.options.icon.options.type === 'dom') {
+            _cleanDomIcon(marker);
+        }
+
         // There is no easy way to know if a marker is added to a layer, so we search for it
         // if there are overlays
         if (isDefined(layers) && isDefined(layers.overlays)) {
@@ -156,6 +188,7 @@ angular.module('ui-leaflet').service('leafletMarkersHelpers', function ($rootSco
         //We need to keep trying until angular has compiled before we _updateLayout and _updatePosition
         //This should take care of any scenario , eg ngincludes, whatever.
         //Is there a better way to check for this?
+
         var innerText = marker._popup._contentNode.innerText || marker._popup._contentNode.textContent;
         if (innerText.length < 1) {
             $timeout(function () {
@@ -189,8 +222,10 @@ angular.module('ui-leaflet').service('leafletMarkersHelpers', function ($rootSco
                 return false;
             }
 
-            compilePopup(marker, markerScope);
-            updatePopup(marker, markerData, map);
+            $timeout(function() {
+                compilePopup(marker, markerScope);
+                updatePopup(marker, markerData, map);
+            });
         }
     };
 
@@ -306,6 +341,9 @@ angular.module('ui-leaflet').service('leafletMarkersHelpers', function ($rootSco
             if (!isObject(markerData.icon)) {
                 // If there is no icon property or it's not an object
                 if (isObject(oldMarkerData.icon)) {
+                    if(oldMarkerData.icon.type === 'dom') { // clean previous icon if it's a dom one
+                        _cleanDomIcon(marker);
+                    }
                     // If there was an icon before restore to the default
                     marker.setIcon(createLeafletIcon());
                     marker.closePopup();
@@ -320,6 +358,9 @@ angular.module('ui-leaflet').service('leafletMarkersHelpers', function ($rootSco
                 var dragG = false;
                 if (marker.dragging) {
                     dragG = marker.dragging.enabled();
+                }
+                if(oldMarkerData.icon.type === 'dom') { // clean previous icon if it's a dom one
+                    _cleanDomIcon(marker);
                 }
                 marker.setIcon(createLeafletIcon(markerData.icon));
                 if (dragG) {
@@ -453,6 +494,8 @@ angular.module('ui-leaflet').service('leafletMarkersHelpers', function ($rootSco
 
         resetMarkerGroups: _resetMarkerGroups,
 
+        resetUnusedMarkerGroups: _resetUnusedMarkerGroups,
+
         deleteMarker: _deleteMarker,
 
         manageOpenPopup: _manageOpenPopup,
@@ -475,7 +518,7 @@ angular.module('ui-leaflet').service('leafletMarkersHelpers', function ($rootSco
                 icon: createLeafletIcon(markerData.icon),
                 title: isDefined(markerData.title) ? markerData.title : '',
                 draggable: isDefined(markerData.draggable) ? markerData.draggable : false,
-                clickable: isDefined(markerData.clickable) ? markerData.clickable : true,
+                interactive: isDefined(markerData.interactive) ? markerData.interactive : true,
                 riseOnHover: isDefined(markerData.riseOnHover) ? markerData.riseOnHover : false,
                 zIndexOffset: isDefined(markerData.zIndexOffset) ? markerData.zIndexOffset : 0,
                 iconAngle: isDefined(markerData.iconAngle) ? markerData.iconAngle : 0
